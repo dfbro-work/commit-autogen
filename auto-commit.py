@@ -8,6 +8,7 @@ import anthropic
 
 load_dotenv()
 api_key = os.getenv("API_KEY")
+selected_model = os.getenv("MODEL")
 
 client = anthropic.Anthropic()
 
@@ -52,6 +53,109 @@ def set_diff_context(diff_content):
     else:
       return "summary"
 
+## for medium changesets - keep structure but remove excessive context
+def get_smart_truncated_diff(diff_content):
+  lines = diff_content.split("\n")
+  truncated = []
+  context_window = 3  # lines to keep around changes
+
+  in_hunk = False
+  last_change_idx = -999
+
+  for i, line in enumerate(lines):
+    # Always keep file headers and metadata
+    if line.startswith(('diff --git', 'index', '---', '+++', 'new file', 'deleted file', 'similarity index', 'rename')):
+      truncated.append(line)
+      in_hunk = False
+      continue
+
+    # Always keep hunk headers
+    if line.startswith('@@'):
+      truncated.append(line)
+      in_hunk = True
+      continue
+
+    if in_hunk:
+      # Lines that represent actual changes
+      if line.startswith(('+', '-')) and not line.startswith(('+++', '---')):
+        last_change_idx = i
+        truncated.append(line)
+      # Context lines - only keep if close to a change
+      elif line.startswith(' '):
+        # Keep if within context window of last change or upcoming change (lookahead)
+        keep = False
+        if i - last_change_idx <= context_window:
+          keep = True
+        else:
+          # Lookahead for upcoming changes
+          for j in range(i + 1, min(i + context_window + 1, len(lines))):
+            if lines[j].startswith(('+', '-')) and not lines[j].startswith(('+++', '---')):
+              keep = True
+              break
+
+        if keep:
+          truncated.append(line)
+        elif truncated and truncated[-1] != "...":
+          # Add ellipsis to show omitted context
+          truncated.append("...")
+      else:
+        # Empty lines or other content
+        if i - last_change_idx <= context_window:
+          truncated.append(line)
+
+  return "\n".join(truncated)
+
+## for very large changesets - summary + truncated diff of top changed files
+def get_hybrid_diff(diff_content, top_n=5):
+  # Get summary for overview
+  summary = get_diff_summary()
+
+  # Parse diff to extract per-file changes and their line counts
+  files_data = []
+  current_file = None
+  current_lines = []
+  line_count = 0
+
+  for line in diff_content.split("\n"):
+    if line.startswith('diff --git'):
+      # Save previous file if exists
+      if current_file and current_lines:
+        files_data.append({
+          'name': current_file,
+          'lines': '\n'.join(current_lines),
+          'change_count': line_count
+        })
+      # Start new file
+      current_file = line.split(' b/')[-1] if ' b/' in line else line.split()[-1]
+      current_lines = [line]
+      line_count = 0
+    elif current_file:
+      current_lines.append(line)
+      # Count actual changes (additions/deletions)
+      if line.startswith(('+', '-')) and not line.startswith(('+++', '---')):
+        line_count += 1
+
+  # Don't forget the last file
+  if current_file and current_lines:
+    files_data.append({
+      'name': current_file,
+      'lines': '\n'.join(current_lines),
+      'change_count': line_count
+    })
+
+  # Sort by change count and take top N
+  files_data.sort(key=lambda x: x['change_count'], reverse=True)
+  top_files = files_data[:top_n]
+
+  # Build hybrid output: summary + truncated diffs of top files
+  result = f"{summary}\n\nKey changes (top {len(top_files)} files):\n\n"
+
+  for file_data in top_files:
+    truncated = get_smart_truncated_diff(file_data['lines'])
+    result += f"{truncated}\n\n"
+
+  return result.strip()
+
 ## for large changesets
 def get_diff_summary():
   try:
@@ -80,7 +184,7 @@ def gen_commit_message(diff_output):
   
   try:
     model_resp = client.messages.create(
-      model = "claude-3-5-haiku-20241022",
+      model = selected_model,
       max_tokens = 75,
       messages = [
         {"role": "user", "content": prompt}
@@ -116,10 +220,17 @@ def main():
 
   diff_context = set_diff_context(staged_diff)
 
-  if diff_context is not "full diff":
-    get_diff_summary()
-  else:
+  if diff_context == "full diff":
     commit_message = gen_commit_message(staged_diff)
+  elif diff_context == "smart trunc":
+    truncated_diff = get_smart_truncated_diff(staged_diff)
+    commit_message = gen_commit_message(truncated_diff)
+  elif diff_context == "hybrid":
+    hybrid_diff = get_hybrid_diff(staged_diff)
+    commit_message = gen_commit_message(hybrid_diff)
+  elif diff_context == "summary":
+    summary = get_diff_summary()
+    commit_message = gen_commit_message(summary)
 
 
   if "--preview" in sys.argv:
