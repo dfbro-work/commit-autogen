@@ -105,7 +105,7 @@ def preview_loop(generated_commit):
 
 def main():
   if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
-    print("usage: git ai-commit [--preview]")
+    print("usage: git auto-commit [--preview]")
     sys.exit(0)
   
   staged_diff = fetch_staged_requests()
