@@ -5,6 +5,7 @@ import requests
 import os
 from dotenv import load_dotenv
 import anthropic
+import tempfile
 
 load_dotenv()
 api_key = os.getenv("API_KEY")
@@ -201,8 +202,49 @@ def gen_commit_message(diff_output):
     sys.exit(3)
 
 def preview_loop(generated_commit):
-  print(f"\nCurrent generated message:")
-  print(f"[ {generated_commit} ]`")
+  print(f"\nGenerated commit message:")
+  print(f"{generated_commit}\n")
+
+  response = input("Edit message? (y/n): ").lower()
+
+  if response == 'y':
+    # Get editor from environment or use default
+    editor = os.environ.get('EDITOR') or os.environ.get('VISUAL') or 'nano'
+
+    # Write to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+      f.write(generated_commit)
+      temp_path = f.name
+
+    try:
+      # Map common GUI editors to their wait flags
+      editor_wait_flags = {
+          'code': '--wait',
+          'subl': '--wait',
+          'atom': '--wait',
+          'mate': '--wait',
+      }
+
+      # Build editor command
+      editor_cmd = [editor, temp_path]
+      editor_name = os.path.basename(editor)
+
+      # Add wait flag if it's a known GUI editor
+      if editor_name in editor_wait_flags:
+        editor_cmd.insert(1, editor_wait_flags[editor_name])
+
+      # Open in editor
+      subprocess.run(editor_cmd, check=True)
+
+      # Read edited content
+      with open(temp_path, 'r') as f:
+        edited_message = f.read().strip()
+
+      return edited_message
+    finally:
+      os.unlink(temp_path)
+  else:
+    return generated_commit
 
 
   
@@ -234,7 +276,10 @@ def main():
 
 
   if "--preview" in sys.argv:
-    preview_loop(commit_message)
+    commit_message = preview_loop(commit_message)
+
+  # TODO: Actually commit with the final message
+  print(f"\nFinal commit message:\n{commit_message}")
   
 
 
