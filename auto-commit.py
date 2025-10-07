@@ -191,12 +191,13 @@ def gen_commit_message(diff_output):
         {"role": "user", "content": prompt}
       ]
     ) 
-    model_resp = model_resp.json()
-    if model_resp[0] == "error":
-      print("Error: " + model_resp[0][0])
+    model_resp_dict = model_resp.model_dump() if hasattr(model_resp, 'model_dump') else model_resp.__dict__
+    if model_resp_dict.get("type") == "error":
+      error_msg = model_resp_dict.get("error", {}).get("message")
+      print(f"Error: {error_msg}")
       sys.exit(2)
     else:
-      return model_resp[0][0]
+      return model_resp_dict["content"][0]["text"]
   except Exception as model_response_fail:
     print(model_response_fail)
     sys.exit(3)
@@ -250,10 +251,14 @@ def preview_loop(generated_commit):
   
 
 def main():
-  if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
+  if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help", "--hlep"]: #for my fellow misspellers 
     print("usage: git auto-commit [--preview]")
     sys.exit(0)
   
+  if API_KEY == None or MODEL == None:
+    print("Make sure enviornment variables (MODEL/API_KEY) are set!")
+    sys.exit(0)
+
   staged_diff = fetch_staged_requests()
 
   if not staged_diff.strip():
