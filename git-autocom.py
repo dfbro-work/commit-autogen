@@ -106,7 +106,7 @@ def get_smart_truncated_diff(diff_content):
 
   return "\n".join(truncated)
 
-## for very large changesets - summary + truncated diff of top changed files
+## for large changesets - summary + truncated diff of top changed files
 def get_hybrid_diff(diff_content, top_n=5):
   # Get summary for overview
   summary = get_diff_summary()
@@ -157,7 +157,7 @@ def get_hybrid_diff(diff_content, top_n=5):
 
   return result.strip()
 
-## for large changesets
+## for very large changesets
 def get_diff_summary():
   try:
     diff_stats = subprocess.run(
@@ -283,15 +283,11 @@ def main():
   if "--preview" in sys.argv:
     commit_message = preview_loop(commit_message)
 
-  # TODO: Actually commit with the final message
-  print(f"\nFinal commit message:\n{commit_message}")
+  try:
+    subprocess.run(['git', 'commit', '-m', commit_message], check=True)
+  except subprocess.CalledProcessError as e:
+    print(f"Error: {e}")
   
-
-
-
-
-
-
 
 if __name__ == "__main__":
   main()
